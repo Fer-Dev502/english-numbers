@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Numbers in English – Match Game</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "Segoe UI", Arial, sans-serif;
+    background: #f3f5f8; color: #333; display: flex; justify-content: center;
+  }
+  .card {
+    background: #fff; margin: 24px 12px; padding: 24px; border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.08); width: 100%; max-width: 720px;
+  }
+  h1 { font-size: 1.5rem; margin: 0 0 16px; color: #444; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  button, select {
+    font-size: 1rem; border: none; border-radius: 6px; padding: 8px 14px;
+    cursor: pointer; font-weight: 600;
+  }
+  .btn-blue  { background: #2f6db5; color: #fff; }
+  .btn-green { background: #3a9a3f; color: #fff; }
+  .btn-gray  { background: #e4e8ee; color: #333; }
+  select { background: #e4e8ee; }
+  .board { position: relative; display: flex; gap: 90px; user-select: none; }
+  #lines { position: absolute; inset: 0; width: 100%; height: 100%;
+           pointer-events: none; overflow: visible; }
+  .col { display: flex; flex-direction: column; gap: 22px; }
+  .row { display: flex; align-items: center; gap: 12px; height: 44px; }
+  .left .row { justify-content: flex-end; }
+  .num { font-size: 1.15rem; min-width: 60px; text-align: right; }
+  .word { font-size: 1.15rem; }
+  .dot {
+    width: 28px; height: 28px; border-radius: 50%; background: #2f6db5;
+    cursor: pointer; flex-shrink: 0; touch-action: none; transition: transform .1s;
+  }
+  .dot.selected { transform: scale(1.3); background: #f0a500; }
+  .say { background: none; padding: 2px 6px; font-size: 1.1rem; }
+  .mark {
+    width: 26px; height: 26px; border-radius: 50%; color: #fff; display: none;
+    align-items: center; justify-content: center; font-weight: bold; margin-left: auto;
+  }
+  .mark.ok  { display: flex; background: #3a9a3f; }
+  .mark.bad { display: flex; background: #d64545; }
+  .right { flex: 1; }
+  path.link { fill: none; stroke: #7aa874; stroke-width: 3; }
+  path.link.ok  { stroke: #3a9a3f; }
+  path.link.bad { stroke: #d64545; }
+  path.temp { fill: none; stroke: #f0a500; stroke-width: 3; stroke-dasharray: 6 4; }
+  #msg { font-size: 1.1rem; font-weight: 600; margin-top: 20px; min-height: 1.5em; }
+  @media (max-width: 520px) {
+    .board { gap: 50px; }
+    .num, .word { font-size: .95rem; }
+    .num { min-width: 44px; }
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Match the numbers with the words.</h1>
+  <div class="toolbar">
+    <button class="btn-blue" id="erase">✏️ Borrar</button>
+    <button class="btn-green" id="check">✔ Revisar</button>
+    <button class="btn-gray" id="new">🔄 Nuevo juego</button>
+    <select id="level">
+      <option value="mixed">Nivel: mezclado</option>
+      <option value="easy">0 – 100</option>
+      <option value="medium">100 – 999</option>
+      <option value="hard">1,000 – 9,999</option>
+    </select>
+  </div>
+  <div class="board" id="board">
+    <svg id="lines"></svg>
+    <div class="col left" id="left"></div>
+    <div class="col right" id="right"></div>
+  </div>
+  <p id="msg"></p>
+</div>
+
+<script>
+// ---------- Números a palabras ----------
+const ONES = ["zero","one","two","three","four","five","six","seven","eight","nine","ten",
+  "eleven","twelve","thirteen","fourteen","fifteen","sixteen","seventeen","eighteen","nineteen"];
+const TENS = ["","","twenty","thirty","forty","fifty","sixty","seventy","eighty","ninety"];
+
+function w100(n) {
+  return n < 20 ? ONES[n] : TENS[Math.floor(n/10)] + (n % 10 ? "-" + ONES[n % 10] : "");
+}
+function w1000(n) {
+  const h = Math.floor(n / 100), r = n % 100;
+  let s = "";
+  if (h) s = h === 1 ? "a hundred" : ONES[h] + " hundred";
+  if (r) s += (h ? " and " : "") + w100(r);
+  return s || "zero";
+}
+function toWords(n) {
+  if (n < 1000) return w1000(n);
+  const t = Math.floor(n / 1000), r = n % 1000;
+  let s = t === 1 ? "a thousand" : w1000(t) + " thousand";
+  if (r) s += r < 100 ? " and " + w100(r) : " " + w1000(r);
+  return s;
+}
+
+// ---------- Estado ----------
+const PAIRS = 8;
+const RANGES = { easy: [0, 100], medium: [100, 999], hard: [1000, 9999] };
+let nums = [], order = [], links = [], checked = false;
+let sel = null, dragging = false, pointer = null;
+
+const board = document.getElementById("board");
+const svg = document.getElementById("lines");
+const leftCol = document.getElementById("left");
+const rightCol = document.getElementById("right");
+const msg = document.getElementById("msg");
+const level = document.getElementById("level");
+
+const rand = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function randomNumber() {
+  let key = level.value;
+  if (key === "mixed") key = ["easy", "medium", "medium", "hard"][rand(0, 3)];
+  const [a, b] = RANGES[key];
+  return rand(a, b);
+}
+
+// ---------- Juego ----------
+function newGame() {
+  const set = new Set();
+  while (set.size < PAIRS) set.add(randomNumber());
+  nums = [...set];
+  order = shuffle([...Array(PAIRS).keys()]);
+  links = []; checked = false; sel = null; msg.textContent = "";
+
+  leftCol.innerHTML = nums.map((n, i) =>
+    `<div class="row"><span class="num">${n.toLocaleString("en-US")}</span>
+     <span class="dot" data-side="L" data-i="${i}"></span></div>`).join("");
+
+  rightCol.innerHTML = order.map((k, j) =>
+    `<div class="row"><span class="dot" data-side="R" data-i="${j}"></span>
+     <span class="word">${toWords(nums[k])}</span>
+     <button class="say" data-text="${toWords(nums[k])}" title="Escuchar">🔊</button>
+     <span class="mark" id="mark${j}"></span></div>`).join("");
+
+  render();
+}
+
+function connect(a, b) {
+  const L = a.dataset.side === "L" ? a : b;
+  const R = a.dataset.side === "R" ? a : b;
+  const i = +L.dataset.i, j = +R.dataset.i;
+  links = links.filter(([x, y]) => x !== i && y !== j);
+  links.push([i, j]);
+  checked = false; msg.textContent = "";
+}
+
+// ---------- Dibujo de líneas ----------
+function center(el) {
+  const b = board.getBoundingClientRect(), r = el.getBoundingClientRect();
+  return { x: r.left + r.width / 2 - b.left, y: r.top + r.height / 2 - b.top };
+}
+function curve(a, b) {
+  const dx = (b.x - a.x) / 2;
+  return `M${a.x},${a.y} C${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`;
+}
+const dotEl = (side, i) => board.querySelector(`.dot[data-side="${side}"][data-i="${i}"]`);
+
+function render() {
+  let html = "";
+  links.forEach(([i, j]) => {
+    let cls = "link";
+    if (checked) cls += order[j] === i ? " ok" : " bad";
+    html += `<path class="${cls}" d="${curve(center(dotEl("L", i)), center(dotEl("R", j)))}"/>`;
+  });
+  if (dragging && sel && pointer) {
+    html += `<path class="temp" d="${curve(center(sel), pointer)}"/>`;
+  }
+  svg.innerHTML = html;
+
+  board.querySelectorAll(".dot").forEach(d => d.classList.toggle("selected", d === sel));
+
+  for (let j = 0; j < PAIRS; j++) {
+    const m = document.getElementById("mark" + j);
+    m.className = "mark"; m.textContent = "";
+    if (!checked) continue;
+    const link = links.find(l => l[1] === j);
+    if (!link) continue;
+    const ok = order[j] === link[0];
+    m.classList.add(ok ? "ok" : "bad");
+    m.textContent = ok ? "✓" : "✗";
+  }
+}
+
+// ---------- Interacción (mouse y touch) ----------
+function pos(e) {
+  const b = board.getBoundingClientRect();
+  return { x: e.clientX - b.left, y: e.clientY - b.top };
+}
+
+board.addEventListener("pointerdown", e => {
+  const d = e.target.closest(".dot");
+  if (!d) return;
+  e.preventDefault();
+  if (sel && sel.dataset.side !== d.dataset.side) {
+    connect(sel, d); sel = null; render(); return;
+  }
+  sel = d; dragging = true; pointer = pos(e); render();
+});
+
+window.addEventListener("pointermove", e => {
+  if (!dragging) return;
+  pointer = pos(e); render();
+});
+
+window.addEventListener("pointerup", e => {
+  if (!dragging) return;
+  dragging = false;
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const d = el && el.closest(".dot");
+  if (d && d !== sel && d.dataset.side !== sel.dataset.side) {
+    connect(sel, d); sel = null;
+  } else if (d !== sel) {
+    sel = null;
+  }
+  render();
+});
+
+// ---------- Botones ----------
+document.getElementById("erase").onclick = () => {
+  links = []; checked = false; sel = null; msg.textContent = ""; render();
+};
+
+document.getElementById("check").onclick = () => {
+  checked = true;
+  const correct = links.filter(([i, j]) => order[j] === i).length;
+  msg.textContent = correct === PAIRS
+    ? "🎉 Excellent! All correct!"
+    : `You have ${correct} of ${PAIRS} correct. Try again!`;
+  msg.style.color = correct === PAIRS ? "#3a9a3f" : "#d64545";
+  render();
+};
+
+document.getElementById("new").onclick = newGame;
+level.onchange = newGame;
+
+rightCol.addEventListener("click", e => {
+  const b = e.target.closest(".say");
+  if (!b || !("speechSynthesis" in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(b.dataset.text);
+  u.lang = "en-US"; u.rate = 0.85;
+  speechSynthesis.speak(u);
+});
+
+window.addEventListener("resize", render);
+newGame();
+</script>
+</body>
+</html>
